@@ -1,19 +1,21 @@
-From 1762fc11402285a4c56c24e6157780eb4ffab979 Mon Sep 17 00:00:00 2001
+From ca2d09566b4630707b811f7478b9959921bac9d2 Mon Sep 17 00:00:00 2001
 From: keptuve <keptuve@keptuve.k>
 Date: Tue, 9 Dec 2025 14:44:19 +0000
-Subject: [PATCH 1/2] Import export bookmarks
+Subject: [PATCH] Import export bookmarks
 
 ---
  .../menu/bookmark_toolbar_menu_improved.xml   |  13 ++
  .../chrome/browser/ChromeStrictMode.java      |   1 +
  .../chrome/browser/ChromeTabbedActivity.java  |   3 +-
  .../app/bookmarks/BookmarkActivity.java       |  13 +-
+ chrome/app/bookmarks_strings.grdp             |   4 +-
+ chrome/app/generated_resources.grd            |   4 +-
  chrome/browser/BUILD.gn                       |   3 +
  chrome/browser/bookmarks/android/BUILD.gn     |  10 +-
- .../bookmarks/android/bookmark_bridge.cc      |  31 ++++
+ .../bookmarks/android/bookmark_bridge.cc      |  29 ++++
  .../bookmarks/android/bookmark_bridge.h       |   9 +
- .../android/bookmark_import_export_helper.cc  | 166 ++++++++++++++++++
- .../android/bookmark_import_export_helper.h   |  53 ++++++
+ .../android/bookmark_import_export_helper.cc  | 164 ++++++++++++++++++
+ .../android/bookmark_import_export_helper.h   |  51 ++++++
  .../browser/bookmarks/BookmarkBridge.java     |  17 ++
  .../bookmarks/BookmarkManagerCoordinator.java |   7 +-
  .../browser/bookmarks/BookmarkPage.java       |  16 +-
@@ -23,16 +25,14 @@ Subject: [PATCH 1/2] Import export bookmarks
  chrome/browser/importer/BUILD.gn              |  32 +++-
  .../external_process_importer_client.cc       |   6 +
  .../external_process_importer_host.cc         |   2 +
- chrome/browser/importer/importer_list.cc      |   4 +
  .../importer/in_process_importer_bridge.cc    |   8 +-
  .../importer/in_process_importer_bridge.h     |   2 +
  .../strings/android_chrome_strings.grd        |   6 +
  chrome/common/importer/BUILD.gn               |   6 +
  chrome/utility/BUILD.gn                       |   9 +-
- .../importer/bookmarks_file_importer.cc       |   4 +-
  chrome/utility/importer/importer_creator.cc   |   2 +-
  chrome/utility/services.cc                    |  10 ++
- 28 files changed, 440 insertions(+), 22 deletions(-)
+ 28 files changed, 432 insertions(+), 24 deletions(-)
  create mode 100644 chrome/browser/bookmarks/android/bookmark_import_export_helper.cc
  create mode 100644 chrome/browser/bookmarks/android/bookmark_import_export_helper.h
 
@@ -138,6 +138,50 @@ index b9034abf9a563..97684107d7a7f 100644
          if (requestCode == EDIT_BOOKMARK_REQUEST_CODE && resultCode == RESULT_OK) {
              assumeNonNull(data);
              BookmarkId bookmarkId =
+diff --git a/chrome/app/bookmarks_strings.grdp b/chrome/app/bookmarks_strings.grdp
+index 9a01ea05e5f52..845b84a840cf9 100644
+--- a/chrome/app/bookmarks_strings.grdp
++++ b/chrome/app/bookmarks_strings.grdp
+@@ -2,7 +2,7 @@
+ <!-- Bookmarks specific strings (included from generated_resources.grd). -->
+ <grit-part>
+   <!-- Begin of Bookmarks Bar strings-->
+-  <if expr="not is_android">
++  <!--if expr="not is_android"-->
+     <!-- The special folders created when importing from other other browsers. -->
+     <if expr="is_win">
+       <message name="IDS_BOOKMARK_GROUP_FROM_IE" desc="The group name of bookmarks from Internet Explorer">
+@@ -24,7 +24,7 @@
+     <message name="IDS_UNNAMED_BOOKMARK_BUTTON_ACCESSIBLE_NAME" desc="Accessible name for unnamed bookmark buttons. Provides something to screen readers.">
+       Unnamed bookmark for <ph name="url">$1<ex>https://example.com</ex></ph>
+     </message>
+-  </if>
++  <!--/if-->
+ 
+   <if expr="not use_titlecase">
+     <message name="IDS_BOOKMARK_BAR_SHOW_APPS_SHORTCUT" desc="Name shown in the context menu to hide/show the apps shortcut in the bookmark bar">
+diff --git a/chrome/app/generated_resources.grd b/chrome/app/generated_resources.grd
+index 9d3902f1fb9f5..04174a1cf6d13 100644
+--- a/chrome/app/generated_resources.grd
++++ b/chrome/app/generated_resources.grd
+@@ -11269,7 +11269,7 @@ Check your passwords anytime in <ph name="GOOGLE_PASSWORD_MANAGER">$1<ex>Google
+       </if>
+ 
+       <!-- Android uses custom UI for Bookmark importing -->
+-      <if expr="not is_android">
++      <!--if expr="not is_android"-->
+         <!-- Import Settings Dialog -->
+         <if expr="is_win">
+           <message name="IDS_IMPORT_FROM_IE" desc="browser combo box: Microsoft Internet Explorer">
+@@ -11302,7 +11302,7 @@ Check your passwords anytime in <ph name="GOOGLE_PASSWORD_MANAGER">$1<ex>Google
+             Import Bookmarks and Settings...
+           </message>
+         </if> <!-- is_macosx -->
+-      </if> <!-- not is_android -->
++      <!--/if--> <!-- not is_android -->
+ 
+       <if expr="is_macosx">
+         <!-- Confirm to quit panel -->
 diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
 index 18677ad2b7f97..0f66439bd0a67 100644
 --- a/chrome/browser/BUILD.gn
@@ -188,7 +232,7 @@ index 77151468af7a2..acd3fe2db1bb0 100644
    deps = [
      ":android",
 diff --git a/chrome/browser/bookmarks/android/bookmark_bridge.cc b/chrome/browser/bookmarks/android/bookmark_bridge.cc
-index 093adb2a96569..c22f215444831 100644
+index 093adb2a96569..ec77d1971dc2a 100644
 --- a/chrome/browser/bookmarks/android/bookmark_bridge.cc
 +++ b/chrome/browser/bookmarks/android/bookmark_bridge.cc
 @@ -37,6 +37,7 @@
@@ -208,7 +252,7 @@ index 093adb2a96569..c22f215444831 100644
    load_start_time_ = base::TimeTicks::Now();
    RecordLoadedStateEnum(LoadedState::kLoadStarted);
  
-@@ -1338,6 +1341,34 @@ bool BookmarkBridge::IsBookmarked(JNIEnv* env, const GURL& url) {
+@@ -1338,6 +1341,32 @@ bool BookmarkBridge::IsBookmarked(JNIEnv* env, const GURL& url) {
    return !GetMostRecentlyAddedUserBookmarkIdForUrl(env, url).is_null();
  }
  
@@ -221,9 +265,8 @@ index 093adb2a96569..c22f215444831 100644
 +    VLOG(2) << " Import export already in progress";
 +    return;
 +  }
-+  bookmark_import_export_helper_->SetWindow(
++  bookmark_import_export_helper_->Import(
 +      ui::WindowAndroid::FromJavaWindowAndroid(j_window));
-+  bookmark_import_export_helper_->Import();
 +}
 +
 +void BookmarkBridge::ExportBookmarks(
@@ -235,9 +278,8 @@ index 093adb2a96569..c22f215444831 100644
 +    VLOG(2) << " Import export already in progress";
 +    return;
 +  }
-+  bookmark_import_export_helper_->SetWindow(
++  bookmark_import_export_helper_->Export(
 +      ui::WindowAndroid::FromJavaWindowAndroid(j_window));
-+  bookmark_import_export_helper_->Export();
 +}
 +
  std::u16string BookmarkBridge::GetTitle(const BookmarkNode* node) const {
@@ -279,10 +321,10 @@ index 9a958941f0e69..3943a93f48ff5 100644
    base::ScopedObservation<bookmarks::BookmarkModel,
 diff --git a/chrome/browser/bookmarks/android/bookmark_import_export_helper.cc b/chrome/browser/bookmarks/android/bookmark_import_export_helper.cc
 new file mode 100644
-index 0000000000000..cd6bccc12d009
+index 0000000000000..9e65cecadb82d
 --- /dev/null
 +++ b/chrome/browser/bookmarks/android/bookmark_import_export_helper.cc
-@@ -0,0 +1,166 @@
+@@ -0,0 +1,164 @@
 +#include "chrome/browser/bookmarks/android/bookmark_import_export_helper.h"
 +
 +#include "base/i18n/file_util_icu.h"
@@ -327,7 +369,8 @@ index 0000000000000..cd6bccc12d009
 +BookmarkImportExportHelper::BookmarkImportExportHelper(Profile* profile)
 +    : profile_(profile) {}
 +
-+bool BookmarkImportExportHelper::Import() {
++bool BookmarkImportExportHelper::Import(ui::WindowAndroid* window) {
++  window_ = window;
 +  if (!EditBookmarksEnabled()) {
 +    LOG(WARNING) << __func__ << " bookmark edit not enabled";
 +  }
@@ -343,7 +386,8 @@ index 0000000000000..cd6bccc12d009
 +  return true;
 +}
 +
-+bool BookmarkImportExportHelper::Export() {
++bool BookmarkImportExportHelper::Export(ui::WindowAndroid* window) {
++  window_ = window;
 +  if (!window_) {
 +    LOG(WARNING) << __func__ << " no window available";
 +    return false;
@@ -359,10 +403,6 @@ index 0000000000000..cd6bccc12d009
 +                     ui::SelectFileDialog::SELECT_SAVEAS_FILE));
 +
 +  return true;
-+}
-+
-+void BookmarkImportExportHelper::SetWindow(ui::WindowAndroid* window) {
-+  window_ = window;
 +}
 +
 +bool BookmarkImportExportHelper::InProgress() {
@@ -451,10 +491,10 @@ index 0000000000000..cd6bccc12d009
 +}
 diff --git a/chrome/browser/bookmarks/android/bookmark_import_export_helper.h b/chrome/browser/bookmarks/android/bookmark_import_export_helper.h
 new file mode 100644
-index 0000000000000..d002fb069ae2c
+index 0000000000000..b58dc5c482c6a
 --- /dev/null
 +++ b/chrome/browser/bookmarks/android/bookmark_import_export_helper.h
-@@ -0,0 +1,53 @@
+@@ -0,0 +1,51 @@
 +
 +#include "base/memory/raw_ptr.h"
 +#include "base/memory/ref_counted.h"
@@ -471,11 +511,9 @@ index 0000000000000..d002fb069ae2c
 + public:
 +  BookmarkImportExportHelper(Profile* profile);
 +
-+  bool Import();
++  bool Import(ui::WindowAndroid* window);
 +
-+  bool Export();
-+
-+  void SetWindow(ui::WindowAndroid* window);
++  bool Export(ui::WindowAndroid* window);
 +
 +  bool InProgress();
 +
@@ -582,7 +620,7 @@ index 09197aa848047..5093b03cb84f1 100644
  
          final @BookmarkRowDisplayPref int displayPref =
 diff --git a/chrome/browser/bookmarks/android/java/src/org/chromium/chrome/browser/bookmarks/BookmarkPage.java b/chrome/browser/bookmarks/android/java/src/org/chromium/chrome/browser/bookmarks/BookmarkPage.java
-index 1645ecb12d8c5..737084c8fbe1c 100644
+index 1645ecb12d8c5..adaa0018ecfd7 100644
 --- a/chrome/browser/bookmarks/android/java/src/org/chromium/chrome/browser/bookmarks/BookmarkPage.java
 +++ b/chrome/browser/bookmarks/android/java/src/org/chromium/chrome/browser/bookmarks/BookmarkPage.java
 @@ -4,10 +4,13 @@
@@ -615,7 +653,7 @@ index 1645ecb12d8c5..737084c8fbe1c 100644
  
 +    private static ChromeTabbedActivity getChromeTabbedActivity() {
 +        for (Activity ref : ApplicationStatus.getRunningActivities()) {
-+            if (!ChromeTabbedActivity.class.isInstance(ref)) continue;
++            if (!(ref instanceof ChromeTabbedActivity)) continue;
 +
 +            return (ChromeTabbedActivity) ref;
 +        }
@@ -853,23 +891,6 @@ index 8a1d68e110774..5717c7e5f375f 100644
  }
  
  void ExternalProcessImporterHost::OnImportLockDialogEnd(bool is_continue) {
-diff --git a/chrome/browser/importer/importer_list.cc b/chrome/browser/importer/importer_list.cc
-index 62546b572bab8..b527d40135e30 100644
---- a/chrome/browser/importer/importer_list.cc
-+++ b/chrome/browser/importer/importer_list.cc
-@@ -188,8 +188,12 @@ std::vector<user_data_importer::SourceProfile> DetectSourceProfilesWorker(
- #endif
-   if (include_interactive_profiles) {
-     user_data_importer::SourceProfile bookmarks_profile;
-+#if !BUILDFLAG(IS_ANDROID)
-     bookmarks_profile.importer_name =
-         l10n_util::GetStringUTF16(IDS_IMPORT_FROM_BOOKMARKS_HTML_FILE);
-+#else
-+    bookmarks_profile.importer_name = u"Bookmarks HTML File";
-+#endif
-     bookmarks_profile.importer_type = user_data_importer::TYPE_BOOKMARKS_FILE;
-     bookmarks_profile.services_supported = user_data_importer::FAVORITES;
-     profiles.push_back(bookmarks_profile);
 diff --git a/chrome/browser/importer/in_process_importer_bridge.cc b/chrome/browser/importer/in_process_importer_bridge.cc
 index fbb20f1ae0668..0d061402bdb30 100644
 --- a/chrome/browser/importer/in_process_importer_bridge.cc
@@ -979,21 +1000,6 @@ index 708d3db9a2b7d..6807d6a2fce4d 100644
    }
  
    if (enable_extensions) {
-diff --git a/chrome/utility/importer/bookmarks_file_importer.cc b/chrome/utility/importer/bookmarks_file_importer.cc
-index 531abb2ea2fbf..1158e323c40f5 100644
---- a/chrome/utility/importer/bookmarks_file_importer.cc
-+++ b/chrome/utility/importer/bookmarks_file_importer.cc
-@@ -103,8 +103,8 @@ void BookmarksFileImporter::StartImport(
-       user_data_importer::ParseBookmarksUnsafe(raw_html);
- 
-   if (!parsed_bookmarks.bookmarks.empty()) {
--    std::u16string first_folder_name =
--        bridge_->GetLocalizedString(IDS_BOOKMARK_GROUP);
-+    std::u16string first_folder_name = u"Imported";
-+    // bridge_->GetLocalizedString(IDS_BOOKMARK_GROUP);
-     std::erase_if(parsed_bookmarks.bookmarks,
-                   [](user_data_importer::ImportedBookmarkEntry bookmark) {
-                     return !internal::CanImportURL(bookmark.url);
 diff --git a/chrome/utility/importer/importer_creator.cc b/chrome/utility/importer/importer_creator.cc
 index 5f8f27c70bafe..ec2eb79f70948 100644
 --- a/chrome/utility/importer/importer_creator.cc
@@ -1042,194 +1048,6 @@ index 89429e8048537..fae129e84b43c 100644
  #if !BUILDFLAG(IS_ANDROID)
    services.Add(RunProfileImporter);
    services.Add(RunMirroringService);
--- 
-2.51.0
-
-
-From 4ed63cec9a01b9c4fec1272ec21cd3216df68881 Mon Sep 17 00:00:00 2001
-From: keptuve <keptuve@keptuve.k>
-Date: Thu, 15 Jan 2026 20:05:43 +0000
-Subject: [PATCH 2/2] Follow-up 1
-
----
- chrome/app/bookmarks_strings.grdp                      |  4 ++--
- chrome/app/generated_resources.grd                     |  4 ++--
- chrome/browser/bookmarks/android/bookmark_bridge.cc    |  6 ++----
- .../bookmarks/android/bookmark_import_export_helper.cc | 10 ++++------
- .../bookmarks/android/bookmark_import_export_helper.h  |  6 ++----
- .../chrome/browser/bookmarks/BookmarkPage.java         |  2 +-
- chrome/browser/importer/importer_list.cc               |  4 ----
- chrome/utility/importer/bookmarks_file_importer.cc     |  4 ++--
- 8 files changed, 15 insertions(+), 25 deletions(-)
-
-diff --git a/chrome/app/bookmarks_strings.grdp b/chrome/app/bookmarks_strings.grdp
-index 9a01ea05e5f52..845b84a840cf9 100644
---- a/chrome/app/bookmarks_strings.grdp
-+++ b/chrome/app/bookmarks_strings.grdp
-@@ -2,7 +2,7 @@
- <!-- Bookmarks specific strings (included from generated_resources.grd). -->
- <grit-part>
-   <!-- Begin of Bookmarks Bar strings-->
--  <if expr="not is_android">
-+  <!--if expr="not is_android"-->
-     <!-- The special folders created when importing from other other browsers. -->
-     <if expr="is_win">
-       <message name="IDS_BOOKMARK_GROUP_FROM_IE" desc="The group name of bookmarks from Internet Explorer">
-@@ -24,7 +24,7 @@
-     <message name="IDS_UNNAMED_BOOKMARK_BUTTON_ACCESSIBLE_NAME" desc="Accessible name for unnamed bookmark buttons. Provides something to screen readers.">
-       Unnamed bookmark for <ph name="url">$1<ex>https://example.com</ex></ph>
-     </message>
--  </if>
-+  <!--/if-->
- 
-   <if expr="not use_titlecase">
-     <message name="IDS_BOOKMARK_BAR_SHOW_APPS_SHORTCUT" desc="Name shown in the context menu to hide/show the apps shortcut in the bookmark bar">
-diff --git a/chrome/app/generated_resources.grd b/chrome/app/generated_resources.grd
-index 9d3902f1fb9f5..04174a1cf6d13 100644
---- a/chrome/app/generated_resources.grd
-+++ b/chrome/app/generated_resources.grd
-@@ -11269,7 +11269,7 @@ Check your passwords anytime in <ph name="GOOGLE_PASSWORD_MANAGER">$1<ex>Google
-       </if>
- 
-       <!-- Android uses custom UI for Bookmark importing -->
--      <if expr="not is_android">
-+      <!--if expr="not is_android"-->
-         <!-- Import Settings Dialog -->
-         <if expr="is_win">
-           <message name="IDS_IMPORT_FROM_IE" desc="browser combo box: Microsoft Internet Explorer">
-@@ -11302,7 +11302,7 @@ Check your passwords anytime in <ph name="GOOGLE_PASSWORD_MANAGER">$1<ex>Google
-             Import Bookmarks and Settings...
-           </message>
-         </if> <!-- is_macosx -->
--      </if> <!-- not is_android -->
-+      <!--/if--> <!-- not is_android -->
- 
-       <if expr="is_macosx">
-         <!-- Confirm to quit panel -->
-diff --git a/chrome/browser/bookmarks/android/bookmark_bridge.cc b/chrome/browser/bookmarks/android/bookmark_bridge.cc
-index c22f215444831..ec77d1971dc2a 100644
---- a/chrome/browser/bookmarks/android/bookmark_bridge.cc
-+++ b/chrome/browser/bookmarks/android/bookmark_bridge.cc
-@@ -1350,9 +1350,8 @@ void BookmarkBridge::ImportBookmarks(
-     VLOG(2) << " Import export already in progress";
-     return;
-   }
--  bookmark_import_export_helper_->SetWindow(
-+  bookmark_import_export_helper_->Import(
-       ui::WindowAndroid::FromJavaWindowAndroid(j_window));
--  bookmark_import_export_helper_->Import();
- }
- 
- void BookmarkBridge::ExportBookmarks(
-@@ -1364,9 +1363,8 @@ void BookmarkBridge::ExportBookmarks(
-     VLOG(2) << " Import export already in progress";
-     return;
-   }
--  bookmark_import_export_helper_->SetWindow(
-+  bookmark_import_export_helper_->Export(
-       ui::WindowAndroid::FromJavaWindowAndroid(j_window));
--  bookmark_import_export_helper_->Export();
- }
- 
- std::u16string BookmarkBridge::GetTitle(const BookmarkNode* node) const {
-diff --git a/chrome/browser/bookmarks/android/bookmark_import_export_helper.cc b/chrome/browser/bookmarks/android/bookmark_import_export_helper.cc
-index cd6bccc12d009..9e65cecadb82d 100644
---- a/chrome/browser/bookmarks/android/bookmark_import_export_helper.cc
-+++ b/chrome/browser/bookmarks/android/bookmark_import_export_helper.cc
-@@ -42,7 +42,8 @@ base::FilePath GetDefaultFilepathForBookmarkExport() {
- BookmarkImportExportHelper::BookmarkImportExportHelper(Profile* profile)
-     : profile_(profile) {}
- 
--bool BookmarkImportExportHelper::Import() {
-+bool BookmarkImportExportHelper::Import(ui::WindowAndroid* window) {
-+  window_ = window;
-   if (!EditBookmarksEnabled()) {
-     LOG(WARNING) << __func__ << " bookmark edit not enabled";
-   }
-@@ -58,7 +59,8 @@ bool BookmarkImportExportHelper::Import() {
-   return true;
- }
- 
--bool BookmarkImportExportHelper::Export() {
-+bool BookmarkImportExportHelper::Export(ui::WindowAndroid* window) {
-+  window_ = window;
-   if (!window_) {
-     LOG(WARNING) << __func__ << " no window available";
-     return false;
-@@ -76,10 +78,6 @@ bool BookmarkImportExportHelper::Export() {
-   return true;
- }
- 
--void BookmarkImportExportHelper::SetWindow(ui::WindowAndroid* window) {
--  window_ = window;
--}
--
- bool BookmarkImportExportHelper::InProgress() {
-   return !!select_file_dialog_;
- }
-diff --git a/chrome/browser/bookmarks/android/bookmark_import_export_helper.h b/chrome/browser/bookmarks/android/bookmark_import_export_helper.h
-index d002fb069ae2c..b58dc5c482c6a 100644
---- a/chrome/browser/bookmarks/android/bookmark_import_export_helper.h
-+++ b/chrome/browser/bookmarks/android/bookmark_import_export_helper.h
-@@ -14,11 +14,9 @@ class BookmarkImportExportHelper
-  public:
-   BookmarkImportExportHelper(Profile* profile);
- 
--  bool Import();
-+  bool Import(ui::WindowAndroid* window);
- 
--  bool Export();
--
--  void SetWindow(ui::WindowAndroid* window);
-+  bool Export(ui::WindowAndroid* window);
- 
-   bool InProgress();
- 
-diff --git a/chrome/browser/bookmarks/android/java/src/org/chromium/chrome/browser/bookmarks/BookmarkPage.java b/chrome/browser/bookmarks/android/java/src/org/chromium/chrome/browser/bookmarks/BookmarkPage.java
-index 737084c8fbe1c..adaa0018ecfd7 100644
---- a/chrome/browser/bookmarks/android/java/src/org/chromium/chrome/browser/bookmarks/BookmarkPage.java
-+++ b/chrome/browser/bookmarks/android/java/src/org/chromium/chrome/browser/bookmarks/BookmarkPage.java
-@@ -76,7 +76,7 @@ public class BookmarkPage extends BasicNativePage {
- 
-     private static ChromeTabbedActivity getChromeTabbedActivity() {
-         for (Activity ref : ApplicationStatus.getRunningActivities()) {
--            if (!ChromeTabbedActivity.class.isInstance(ref)) continue;
-+            if (!(ref instanceof ChromeTabbedActivity)) continue;
- 
-             return (ChromeTabbedActivity) ref;
-         }
-diff --git a/chrome/browser/importer/importer_list.cc b/chrome/browser/importer/importer_list.cc
-index b527d40135e30..62546b572bab8 100644
---- a/chrome/browser/importer/importer_list.cc
-+++ b/chrome/browser/importer/importer_list.cc
-@@ -188,12 +188,8 @@ std::vector<user_data_importer::SourceProfile> DetectSourceProfilesWorker(
- #endif
-   if (include_interactive_profiles) {
-     user_data_importer::SourceProfile bookmarks_profile;
--#if !BUILDFLAG(IS_ANDROID)
-     bookmarks_profile.importer_name =
-         l10n_util::GetStringUTF16(IDS_IMPORT_FROM_BOOKMARKS_HTML_FILE);
--#else
--    bookmarks_profile.importer_name = u"Bookmarks HTML File";
--#endif
-     bookmarks_profile.importer_type = user_data_importer::TYPE_BOOKMARKS_FILE;
-     bookmarks_profile.services_supported = user_data_importer::FAVORITES;
-     profiles.push_back(bookmarks_profile);
-diff --git a/chrome/utility/importer/bookmarks_file_importer.cc b/chrome/utility/importer/bookmarks_file_importer.cc
-index 1158e323c40f5..531abb2ea2fbf 100644
---- a/chrome/utility/importer/bookmarks_file_importer.cc
-+++ b/chrome/utility/importer/bookmarks_file_importer.cc
-@@ -103,8 +103,8 @@ void BookmarksFileImporter::StartImport(
-       user_data_importer::ParseBookmarksUnsafe(raw_html);
- 
-   if (!parsed_bookmarks.bookmarks.empty()) {
--    std::u16string first_folder_name = u"Imported";
--    // bridge_->GetLocalizedString(IDS_BOOKMARK_GROUP);
-+    std::u16string first_folder_name =
-+        bridge_->GetLocalizedString(IDS_BOOKMARK_GROUP);
-     std::erase_if(parsed_bookmarks.bookmarks,
-                   [](user_data_importer::ImportedBookmarkEntry bookmark) {
-                     return !internal::CanImportURL(bookmark.url);
 -- 
 2.51.0
 
