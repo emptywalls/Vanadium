@@ -1,21 +1,48 @@
-From ca2d09566b4630707b811f7478b9959921bac9d2 Mon Sep 17 00:00:00 2001
+From 8d003011aca0c6735da3ca585e75a9e16e1e57bb Mon Sep 17 00:00:00 2001
 From: keptuve <keptuve@keptuve.k>
 Date: Tue, 9 Dec 2025 14:44:19 +0000
 Subject: [PATCH] Import export bookmarks
 
+Adds "Impport bookmarks" and "Export bookmarks" menu items to the bookmarks page.
+
+We extend an existing `BookmarkBridge` class to talk to c++ implementation, which runs
+as a `chrome::mojo::ProfileImport` service, which is not  enabled for Android in chromium.
+This patch modifies the .gn files to enable just the import/export bookmarks part of it.
+
+chrome/browser/BUILD.gn
+Add bookmark_html_writer, which writes bookmarks to the browser profile (import).
+Add a dependency on //chrome/browser/importer:vanadium_impl
+
+chrome/browser/bookmarks/android/BUILD.gn
+Add bookmark_import_export_helper.cc, the Vanadium specific impl.
+
+chrome/browser/importer/BUILD.gn
+Defines vanadium_impl: browser process client-side for `chrome::mojo::ProfileImport` service
+
+chrome/common/importer/BUILD.gn
+Exclude various platform specific importers.
+
+chrome/utility/BUILD.gn
+The ProfileImport service run as a utility process. Take bookmarks_file_importer.cc, exclude other.
+
+Approx one-way execution flow:
+
+Android Java: handle menu events -> (C++)  BookmarkBridge -> (Vanadium)  BookmarksImportExportHelper ->
+(browser service launcher) RunProfileImporter ->
+(trimmed down native chromium service in a separate helper process) `chrome::mojo::ProfileImport`
 ---
  .../menu/bookmark_toolbar_menu_improved.xml   |  13 ++
  .../chrome/browser/ChromeStrictMode.java      |   1 +
  .../chrome/browser/ChromeTabbedActivity.java  |   3 +-
  .../app/bookmarks/BookmarkActivity.java       |  13 +-
  chrome/app/bookmarks_strings.grdp             |   4 +-
- chrome/app/generated_resources.grd            |   4 +-
+ chrome/app/generated_resources.grd            |   8 +-
  chrome/browser/BUILD.gn                       |   3 +
  chrome/browser/bookmarks/android/BUILD.gn     |  10 +-
- .../bookmarks/android/bookmark_bridge.cc      |  29 ++++
+ .../bookmarks/android/bookmark_bridge.cc      |  27 +++
  .../bookmarks/android/bookmark_bridge.h       |   9 +
- .../android/bookmark_import_export_helper.cc  | 164 ++++++++++++++++++
- .../android/bookmark_import_export_helper.h   |  51 ++++++
+ .../android/bookmark_import_export_helper.cc  | 173 ++++++++++++++++++
+ .../android/bookmark_import_export_helper.h   |  52 ++++++
  .../browser/bookmarks/BookmarkBridge.java     |  17 ++
  .../bookmarks/BookmarkManagerCoordinator.java |   7 +-
  .../browser/bookmarks/BookmarkPage.java       |  16 +-
@@ -23,7 +50,6 @@ Subject: [PATCH] Import export bookmarks
  .../bookmarks/BookmarkToolbarCoordinator.java |   7 +-
  .../bookmarks/BookmarkToolbarMediator.java    |  12 +-
  chrome/browser/importer/BUILD.gn              |  32 +++-
- .../external_process_importer_client.cc       |   6 +
  .../external_process_importer_host.cc         |   2 +
  .../importer/in_process_importer_bridge.cc    |   8 +-
  .../importer/in_process_importer_bridge.h     |   2 +
@@ -31,8 +57,8 @@ Subject: [PATCH] Import export bookmarks
  chrome/common/importer/BUILD.gn               |   6 +
  chrome/utility/BUILD.gn                       |   9 +-
  chrome/utility/importer/importer_creator.cc   |   2 +-
- chrome/utility/services.cc                    |  10 ++
- 28 files changed, 432 insertions(+), 24 deletions(-)
+ chrome/utility/services.cc                    |  14 ++
+ 27 files changed, 440 insertions(+), 26 deletions(-)
  create mode 100644 chrome/browser/bookmarks/android/bookmark_import_export_helper.cc
  create mode 100644 chrome/browser/bookmarks/android/bookmark_import_export_helper.h
 
@@ -161,9 +187,23 @@ index 9a01ea05e5f52..845b84a840cf9 100644
    <if expr="not use_titlecase">
      <message name="IDS_BOOKMARK_BAR_SHOW_APPS_SHORTCUT" desc="Name shown in the context menu to hide/show the apps shortcut in the bookmark bar">
 diff --git a/chrome/app/generated_resources.grd b/chrome/app/generated_resources.grd
-index 9d3902f1fb9f5..04174a1cf6d13 100644
+index 9d3902f1fb9f5..5842e9bdaebdb 100644
 --- a/chrome/app/generated_resources.grd
 +++ b/chrome/app/generated_resources.grd
+@@ -5125,11 +5125,11 @@ are declared in tools/grit/grit_args.gni.
+       <message name="IDS_UTILITY_PROCESS_FILE_UTILITY_NAME" desc="The name of the utility process used for various Chrome specific file operations.">
+           Chrome File Utilities
+       </message>
+-      <if expr="not is_android">
++      <!--if expr="not is_android"-->
+         <message name="IDS_UTILITY_PROCESS_PROFILE_IMPORTER_NAME" desc="The name of the utility process used for importing profiles.">
+           Profile Importer
+         </message>
+-      </if>
++      <!--/if-->
+       <message name="IDS_UTILITY_PROCESS_QRCODE_GENERATOR_SERVICE_NAME" desc="The name of the utility process used for encoding QR Codes.">
+         QR Code Generator
+       </message>
 @@ -11269,7 +11269,7 @@ Check your passwords anytime in <ph name="GOOGLE_PASSWORD_MANAGER">$1<ex>Google
        </if>
  
@@ -232,7 +272,7 @@ index 77151468af7a2..acd3fe2db1bb0 100644
    deps = [
      ":android",
 diff --git a/chrome/browser/bookmarks/android/bookmark_bridge.cc b/chrome/browser/bookmarks/android/bookmark_bridge.cc
-index 093adb2a96569..ec77d1971dc2a 100644
+index 093adb2a96569..56742d6fc004a 100644
 --- a/chrome/browser/bookmarks/android/bookmark_bridge.cc
 +++ b/chrome/browser/bookmarks/android/bookmark_bridge.cc
 @@ -37,6 +37,7 @@
@@ -252,7 +292,7 @@ index 093adb2a96569..ec77d1971dc2a 100644
    load_start_time_ = base::TimeTicks::Now();
    RecordLoadedStateEnum(LoadedState::kLoadStarted);
  
-@@ -1338,6 +1341,32 @@ bool BookmarkBridge::IsBookmarked(JNIEnv* env, const GURL& url) {
+@@ -1338,6 +1341,30 @@ bool BookmarkBridge::IsBookmarked(JNIEnv* env, const GURL& url) {
    return !GetMostRecentlyAddedUserBookmarkIdForUrl(env, url).is_null();
  }
  
@@ -265,8 +305,7 @@ index 093adb2a96569..ec77d1971dc2a 100644
 +    VLOG(2) << " Import export already in progress";
 +    return;
 +  }
-+  bookmark_import_export_helper_->Import(
-+      ui::WindowAndroid::FromJavaWindowAndroid(j_window));
++  bookmark_import_export_helper_->Import(j_window);
 +}
 +
 +void BookmarkBridge::ExportBookmarks(
@@ -278,8 +317,7 @@ index 093adb2a96569..ec77d1971dc2a 100644
 +    VLOG(2) << " Import export already in progress";
 +    return;
 +  }
-+  bookmark_import_export_helper_->Export(
-+      ui::WindowAndroid::FromJavaWindowAndroid(j_window));
++  bookmark_import_export_helper_->Export(j_window);
 +}
 +
  std::u16string BookmarkBridge::GetTitle(const BookmarkNode* node) const {
@@ -321,14 +359,15 @@ index 9a958941f0e69..3943a93f48ff5 100644
    base::ScopedObservation<bookmarks::BookmarkModel,
 diff --git a/chrome/browser/bookmarks/android/bookmark_import_export_helper.cc b/chrome/browser/bookmarks/android/bookmark_import_export_helper.cc
 new file mode 100644
-index 0000000000000..9e65cecadb82d
+index 0000000000000..86b30ec13a48b
 --- /dev/null
 +++ b/chrome/browser/bookmarks/android/bookmark_import_export_helper.cc
-@@ -0,0 +1,164 @@
+@@ -0,0 +1,173 @@
 +#include "chrome/browser/bookmarks/android/bookmark_import_export_helper.h"
 +
 +#include "base/i18n/file_util_icu.h"
 +#include "base/i18n/time_formatting.h"
++#include "base/logging.h"
 +#include "base/path_service.h"
 +#include "base/task/thread_pool.h"
 +#include "chrome/browser/bookmarks/bookmark_html_writer.h"
@@ -340,6 +379,7 @@ index 0000000000000..9e65cecadb82d
 +#include "components/bookmarks/common/bookmark_pref_names.h"
 +#include "components/user_prefs/user_prefs.h"
 +#include "content/public/browser/browser_thread.h"
++#include "ui/android/window_android.h"
 +#include "ui/base/l10n/l10n_util.h"
 +#include "ui/gfx/native_ui_types.h"
 +#include "ui/shell_dialogs/select_file_policy.h"
@@ -369,13 +409,16 @@ index 0000000000000..9e65cecadb82d
 +BookmarkImportExportHelper::BookmarkImportExportHelper(Profile* profile)
 +    : profile_(profile) {}
 +
-+bool BookmarkImportExportHelper::Import(ui::WindowAndroid* window) {
-+  window_ = window;
++bool BookmarkImportExportHelper::Import(
++    const base::android::JavaParamRef<jobject>& j_window) {
++  j_window_ = j_window;
++  auto* window = ui::WindowAndroid::FromJavaWindowAndroid(j_window);
++  if (!window) {
++    LOG(WARNING) << __func__ << " no window available";
++    return false;
++  }
 +  if (!EditBookmarksEnabled()) {
 +    LOG(WARNING) << __func__ << " bookmark edit not enabled";
-+  }
-+  if (!window_) {
-+    LOG(WARNING) << __func__ << " no window available";
 +    return false;
 +  }
 +
@@ -386,9 +429,11 @@ index 0000000000000..9e65cecadb82d
 +  return true;
 +}
 +
-+bool BookmarkImportExportHelper::Export(ui::WindowAndroid* window) {
-+  window_ = window;
-+  if (!window_) {
++bool BookmarkImportExportHelper::Export(
++    const base::android::JavaParamRef<jobject>& j_window) {
++  j_window_ = j_window;
++  auto* window = ui::WindowAndroid::FromJavaWindowAndroid(j_window);
++  if (!window) {
 +    LOG(WARNING) << __func__ << " no window available";
 +    return false;
 +  }
@@ -471,10 +516,11 @@ index 0000000000000..9e65cecadb82d
 +  ui::SelectFileDialog::FileTypeInfo file_type_info;
 +  file_type_info.extensions.resize(1);
 +  file_type_info.extensions[0].push_back(FILE_PATH_LITERAL("html"));
++  auto* window = ui::WindowAndroid::FromJavaWindowAndroid(j_window_);
 +
 +  select_file_dialog_->SelectFile(type, std::u16string(), default_path,
 +                                  &file_type_info, 0,
-+                                  base::FilePath::StringType(), window_);
++                                  base::FilePath::StringType(), window);
 +}
 +
 +void BookmarkImportExportHelper::CleanupFileDialog() {
@@ -482,6 +528,7 @@ index 0000000000000..9e65cecadb82d
 +    select_file_dialog_->ListenerDestroyed();
 +  }
 +  select_file_dialog_.reset();
++  j_window_.Reset();
 +  Release();  // Balanced in ShowSelectFileDialog().
 +}
 +
@@ -491,29 +538,30 @@ index 0000000000000..9e65cecadb82d
 +}
 diff --git a/chrome/browser/bookmarks/android/bookmark_import_export_helper.h b/chrome/browser/bookmarks/android/bookmark_import_export_helper.h
 new file mode 100644
-index 0000000000000..b58dc5c482c6a
+index 0000000000000..7e808ae142bdf
 --- /dev/null
 +++ b/chrome/browser/bookmarks/android/bookmark_import_export_helper.h
-@@ -0,0 +1,51 @@
-+
+@@ -0,0 +1,52 @@
++#include "base/android/scoped_java_ref.h"
 +#include "base/memory/raw_ptr.h"
 +#include "base/memory/ref_counted.h"
 +#include "chrome/browser/profiles/profile.h"
 +#include "chrome/common/chrome_paths.h"
 +#include "chrome/grit/generated_resources.h"
 +#include "components/prefs/pref_service.h"
-+#include "ui/android/window_android.h"
 +#include "ui/shell_dialogs/select_file_dialog.h"
 +
++// Helper for running a `chrome::mojom::ProfileImport` service. Used by `` to
++// implement import/export bookmarks for Vanadium.
 +class BookmarkImportExportHelper
 +    : public ui::SelectFileDialog::Listener,
 +      public base::RefCountedThreadSafe<BookmarkImportExportHelper> {
 + public:
 +  BookmarkImportExportHelper(Profile* profile);
 +
-+  bool Import(ui::WindowAndroid* window);
++  bool Import(const base::android::JavaParamRef<jobject>& j_windoW);
 +
-+  bool Export(ui::WindowAndroid* window);
++  bool Export(const base::android::JavaParamRef<jobject>& j_windoW);
 +
 +  bool InProgress();
 +
@@ -538,11 +586,11 @@ index 0000000000000..b58dc5c482c6a
 +
 +  bool EditBookmarksEnabled();
 +
++  base::android::ScopedJavaGlobalRef<jobject> j_window_;
++
 +  scoped_refptr<ui::SelectFileDialog> select_file_dialog_;
 +
 +  raw_ptr<Profile> profile_ = nullptr;
-+
-+  raw_ptr<ui::WindowAndroid> window_ = nullptr;
 +
 +  bool is_import_ = true;
 +};
@@ -620,7 +668,7 @@ index 09197aa848047..5093b03cb84f1 100644
  
          final @BookmarkRowDisplayPref int displayPref =
 diff --git a/chrome/browser/bookmarks/android/java/src/org/chromium/chrome/browser/bookmarks/BookmarkPage.java b/chrome/browser/bookmarks/android/java/src/org/chromium/chrome/browser/bookmarks/BookmarkPage.java
-index 1645ecb12d8c5..adaa0018ecfd7 100644
+index 1645ecb12d8c5..b6f88ca47a71f 100644
 --- a/chrome/browser/bookmarks/android/java/src/org/chromium/chrome/browser/bookmarks/BookmarkPage.java
 +++ b/chrome/browser/bookmarks/android/java/src/org/chromium/chrome/browser/bookmarks/BookmarkPage.java
 @@ -4,10 +4,13 @@
@@ -653,9 +701,9 @@ index 1645ecb12d8c5..adaa0018ecfd7 100644
  
 +    private static ChromeTabbedActivity getChromeTabbedActivity() {
 +        for (Activity ref : ApplicationStatus.getRunningActivities()) {
-+            if (!(ref instanceof ChromeTabbedActivity)) continue;
++            if (!(ref instanceof ChromeTabbedActivity ctaRef)) continue;
 +
-+            return (ChromeTabbedActivity) ref;
++            return ctaRef;
 +        }
 +
 +        return null;
@@ -842,38 +890,6 @@ index 0ad7c3c675297..d737b4917cd90 100644
  source_set("browser_tests") {
    testonly = true
    defines = [ "HAS_OUT_OF_PROC_TEST_RUNNER" ]
-diff --git a/chrome/browser/importer/external_process_importer_client.cc b/chrome/browser/importer/external_process_importer_client.cc
-index 6ee7a959fde3e..c03839f45faaf 100644
---- a/chrome/browser/importer/external_process_importer_client.cc
-+++ b/chrome/browser/importer/external_process_importer_client.cc
-@@ -42,7 +42,11 @@ void ExternalProcessImporterClient::Start() {
-   content::ServiceProcessHost::Launch(
-       profile_import_.BindNewPipeAndPassReceiver(),
-       content::ServiceProcessHost::Options()
-+#if !BUILDFLAG(IS_ANDROID)
-           .WithDisplayName(IDS_UTILITY_PROCESS_PROFILE_IMPORTER_NAME)
-+#else
-+          .WithDisplayName(u"Profile Importer")
-+#endif
- #if BUILDFLAG(IS_MAC)
-           // Importing from Firefox involves loading a Firefox dylib into the
-           // importer service process. Use the child process that doesn't
-@@ -56,6 +60,7 @@ void ExternalProcessImporterClient::Start() {
-   // Dictionary of all localized strings that could be needed by the importer
-   // in the external process.
-   base::flat_map<uint32_t, std::string> localized_strings;
-+#if !BUILDFLAG(IS_ANDROID)
-   localized_strings.try_emplace(IDS_BOOKMARK_GROUP,
-                                 l10n_util::GetStringUTF8(IDS_BOOKMARK_GROUP));
-   localized_strings.try_emplace(
-@@ -75,6 +80,7 @@ void ExternalProcessImporterClient::Start() {
-   localized_strings.try_emplace(
-       IDS_BOOKMARK_BAR_FOLDER_NAME,
-       l10n_util::GetStringUTF8(IDS_BOOKMARK_BAR_FOLDER_NAME));
-+#endif
- 
-   // If the utility process hasn't started yet the message will queue until it
-   // does.
 diff --git a/chrome/browser/importer/external_process_importer_host.cc b/chrome/browser/importer/external_process_importer_host.cc
 index 8a1d68e110774..5717c7e5f375f 100644
 --- a/chrome/browser/importer/external_process_importer_host.cc
@@ -1014,7 +1030,7 @@ index 5f8f27c70bafe..ec2eb79f70948 100644
        return new FirefoxImporter();
  #endif
 diff --git a/chrome/utility/services.cc b/chrome/utility/services.cc
-index 89429e8048537..fae129e84b43c 100644
+index 89429e8048537..0fabc14185d4a 100644
 --- a/chrome/utility/services.cc
 +++ b/chrome/utility/services.cc
 @@ -54,6 +54,9 @@
@@ -1027,10 +1043,13 @@ index 89429e8048537..fae129e84b43c 100644
  #if !BUILDFLAG(IS_ANDROID)
  #include "chrome/common/importer/profile_import.mojom.h"
  #include "chrome/utility/importer/profile_import_impl.h"
-@@ -224,6 +227,11 @@ auto RunSystemSignalsService(
+@@ -224,6 +227,14 @@ auto RunSystemSignalsService(
  }
  #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
  
++// Vanadium:  Function copied from the !IS_ANDROID block below. Should be
++// more resilient to upstream changes compared to changing the build flags, when
++// applying the patch.
 +auto RunProfileImporter(
 +    mojo::PendingReceiver<chrome::mojom::ProfileImport> receiver) {
 +  return std::make_unique<ProfileImportImpl>(std::move(receiver));
@@ -1039,10 +1058,11 @@ index 89429e8048537..fae129e84b43c 100644
  #if !BUILDFLAG(IS_ANDROID)
  auto RunProxyResolver(
      mojo::PendingReceiver<proxy_resolver::mojom::ProxyResolverFactory>
-@@ -441,6 +449,8 @@ void RegisterMainThreadServices(mojo::ServiceFactory& services) {
+@@ -441,6 +452,9 @@ void RegisterMainThreadServices(mojo::ServiceFactory& services) {
    services.Add(RunCSVPasswordParser);
    services.Add(ContentBookmarkParser);
  
++  // Vanadium: register the importer service.
 +  services.Add(RunProfileImporter);
 +
  #if !BUILDFLAG(IS_ANDROID)
