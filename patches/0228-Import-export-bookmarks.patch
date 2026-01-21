@@ -1,4 +1,4 @@
-From 8d003011aca0c6735da3ca585e75a9e16e1e57bb Mon Sep 17 00:00:00 2001
+From 9ee9194957451f8c42bb41e93d7f5db7d467276c Mon Sep 17 00:00:00 2001
 From: keptuve <keptuve@keptuve.k>
 Date: Tue, 9 Dec 2025 14:44:19 +0000
 Subject: [PATCH] Import export bookmarks
@@ -30,6 +30,8 @@ Approx one-way execution flow:
 Android Java: handle menu events -> (C++)  BookmarkBridge -> (Vanadium)  BookmarksImportExportHelper ->
 (browser service launcher) RunProfileImporter ->
 (trimmed down native chromium service in a separate helper process) `chrome::mojo::ProfileImport`
+
+typo
 ---
  .../menu/bookmark_toolbar_menu_improved.xml   |  13 ++
  .../chrome/browser/ChromeStrictMode.java      |   1 +
@@ -538,7 +540,7 @@ index 0000000000000..86b30ec13a48b
 +}
 diff --git a/chrome/browser/bookmarks/android/bookmark_import_export_helper.h b/chrome/browser/bookmarks/android/bookmark_import_export_helper.h
 new file mode 100644
-index 0000000000000..7e808ae142bdf
+index 0000000000000..c4e4b0eeb7831
 --- /dev/null
 +++ b/chrome/browser/bookmarks/android/bookmark_import_export_helper.h
 @@ -0,0 +1,52 @@
@@ -559,9 +561,9 @@ index 0000000000000..7e808ae142bdf
 + public:
 +  BookmarkImportExportHelper(Profile* profile);
 +
-+  bool Import(const base::android::JavaParamRef<jobject>& j_windoW);
++  bool Import(const base::android::JavaParamRef<jobject>& j_window);
 +
-+  bool Export(const base::android::JavaParamRef<jobject>& j_windoW);
++  bool Export(const base::android::JavaParamRef<jobject>& j_window);
 +
 +  bool InProgress();
 +
