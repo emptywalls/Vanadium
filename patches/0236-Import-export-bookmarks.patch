@@ -1,4 +1,4 @@
-From bd679c15b382bcdefa989fe41c24f6487e5a5f16 Mon Sep 17 00:00:00 2001
+From 8550f97eb9bae40ece339e9e17652baebbbd899d Mon Sep 17 00:00:00 2001
 From: keptuve <keptuve@keptuve.k>
 Date: Tue, 9 Dec 2025 14:44:19 +0000
 Subject: [PATCH] Import export bookmarks
@@ -43,7 +43,7 @@ typo
  chrome/browser/bookmarks/android/BUILD.gn     |  10 +-
  .../bookmarks/android/bookmark_bridge.cc      |  27 +++
  .../bookmarks/android/bookmark_bridge.h       |   9 +
- .../android/bookmark_import_export_helper.cc  | 173 ++++++++++++++++++
+ .../android/bookmark_import_export_helper.cc  | 176 ++++++++++++++++++
  .../android/bookmark_import_export_helper.h   |  52 ++++++
  .../browser/bookmarks/BookmarkBridge.java     |  17 ++
  .../bookmarks/BookmarkManagerCoordinator.java |   7 +-
@@ -60,7 +60,7 @@ typo
  chrome/utility/BUILD.gn                       |   9 +-
  chrome/utility/importer/importer_creator.cc   |   2 +-
  chrome/utility/services.cc                    |  14 ++
- 27 files changed, 440 insertions(+), 26 deletions(-)
+ 27 files changed, 443 insertions(+), 26 deletions(-)
  create mode 100644 chrome/browser/bookmarks/android/bookmark_import_export_helper.cc
  create mode 100644 chrome/browser/bookmarks/android/bookmark_import_export_helper.h
 
@@ -101,7 +101,7 @@ index cd3f4177309a4..173fb3f5aeb18 100644
  
          StrictMode.VmPolicy.Builder vmPolicy =
 diff --git a/chrome/android/java/src/org/chromium/chrome/browser/ChromeTabbedActivity.java b/chrome/android/java/src/org/chromium/chrome/browser/ChromeTabbedActivity.java
-index f2fc8f791b7ed..0babbdb5bf202 100644
+index 28a491c7cadff..cb9c9ae2df810 100644
 --- a/chrome/android/java/src/org/chromium/chrome/browser/ChromeTabbedActivity.java
 +++ b/chrome/android/java/src/org/chromium/chrome/browser/ChromeTabbedActivity.java
 @@ -1231,7 +1231,8 @@ public class ChromeTabbedActivity extends ChromeActivity implements PreAttachInt
@@ -225,10 +225,10 @@ index 25c2a9ad92d8d..417471a75841a 100644
        <if expr="is_macosx">
          <!-- Confirm to quit panel -->
 diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
-index 61ea8e60d7d26..e9ff935cae90b 100644
+index 8b5c105761951..4cb8376fd9780 100644
 --- a/chrome/browser/BUILD.gn
 +++ b/chrome/browser/BUILD.gn
-@@ -2993,6 +2993,8 @@ static_library("browser") {
+@@ -2994,6 +2994,8 @@ static_library("browser") {
        "android/webapps/web_app_launch_handler.cc",
        "android/webapps/webapp_registry.cc",
        "android/webapps/webapp_registry.h",
@@ -237,7 +237,7 @@ index 61ea8e60d7d26..e9ff935cae90b 100644
        "browser_process_platform_part_android.cc",
        "browser_process_platform_part_android.h",
        "browsing_data/counters/tabs_counter.cc",
-@@ -3408,6 +3410,7 @@ static_library("browser") {
+@@ -3411,6 +3413,7 @@ static_library("browser") {
        "//chrome/browser/flags:flags_android",
        "//chrome/browser/flags:flags_android_impl",
        "//chrome/browser/gesturenav/android:jni_headers",
@@ -361,10 +361,10 @@ index 9a958941f0e69..3943a93f48ff5 100644
    base::ScopedObservation<bookmarks::BookmarkModel,
 diff --git a/chrome/browser/bookmarks/android/bookmark_import_export_helper.cc b/chrome/browser/bookmarks/android/bookmark_import_export_helper.cc
 new file mode 100644
-index 0000000000000..86b30ec13a48b
+index 0000000000000..2a83fefe65464
 --- /dev/null
 +++ b/chrome/browser/bookmarks/android/bookmark_import_export_helper.cc
-@@ -0,0 +1,173 @@
+@@ -0,0 +1,176 @@
 +#include "chrome/browser/bookmarks/android/bookmark_import_export_helper.h"
 +
 +#include "base/i18n/file_util_icu.h"
@@ -515,6 +515,9 @@ index 0000000000000..86b30ec13a48b
 +
 +  select_file_dialog_ = ui::SelectFileDialog::Create(
 +      this, std::make_unique<ChromeSelectFilePolicy>(nullptr));
++  std::vector<std::u16string> mime_types;
++  mime_types.push_back(u"text/html");
++  select_file_dialog_->SetAcceptTypes(mime_types);
 +  ui::SelectFileDialog::FileTypeInfo file_type_info;
 +  file_type_info.extensions.resize(1);
 +  file_type_info.extensions[0].push_back(FILE_PATH_LITERAL("html"));
@@ -944,10 +947,10 @@ index 61190844025f0..70079a6c92130 100644
                            base::WeakPtr<ExternalProcessImporterHost> host);
  
 diff --git a/chrome/browser/ui/android/strings/android_chrome_strings.grd b/chrome/browser/ui/android/strings/android_chrome_strings.grd
-index 248ade81ebb45..c220ed32df688 100644
+index 0c2eb17beab07..e36335280a145 100644
 --- a/chrome/browser/ui/android/strings/android_chrome_strings.grd
 +++ b/chrome/browser/ui/android/strings/android_chrome_strings.grd
-@@ -4627,6 +4627,12 @@ To change this setting, <ph name="BEGIN_LINK">BEGIN_LINK</ph>delete the Chrome d
+@@ -4762,6 +4762,12 @@ To change this setting, <ph name="BEGIN_LINK">BEGIN_LINK</ph>delete the Vanadium
        <message name="IDS_SORT_BY_LAST_OPENED"  desc="Option in the bookmarks manager to sort by last opened. [CHAR_LIMIT=24]">
          Sort by last opened
        </message>
